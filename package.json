@@ -1,6 +1,6 @@
 {
   "name": "reactor-bindings-ts",
-  "version": "0.1.0",
+  "version": "1.1.2",
   "description": "Publisher JSX and template integrations for Solid, React, Preact, Vue, and Angular.",
   "keywords": ["reactor", "publisher", "flux", "mono", "solid-js", "react", "preact", "vue", "angular", "jsx"],
   "author": "CKATEPTb",
