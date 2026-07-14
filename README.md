@@ -786,38 +786,3 @@ framework rather than creating a new function on every render.
 
 Most JSX applications should use the appropriate `/vite` module instead of
 configuring Babel manually.
-
-## Development
-
-```sh
-npm ci
-npm run verify
-```
-
-`npm test` delegates to `verify`; either command performs all project checks:
-
-- TSDoc coverage;
-- internal `@/` import policy;
-- TypeScript type checking;
-- framework and compiler tests;
-- ESM, declaration, and source-map build;
-- Solid runtime demo build;
-- npm tarball validation.
-
-Source and test imports use the `@/` alias. The build rewrites that alias to
-portable relative ESM paths in `dist`.
-
-## Publishing
-
-GitHub Actions follow the same production workflow as `reactor-core-ts`. A push
-to the `production` branch installs dependencies with Node.js 24.x, runs the
-test suite, rebuilds the package, and publishes it to npm with provenance and
-public access. Configure npm trusted publishing for this workflow or provide
-the `NPM_TOKEN` repository secret.
-
-## License
-
-Copyright © 2026 CKATEPTb.
-
-Licensed under the [GNU Lesser General Public License version 3 only](./LICENSE.md)
-(`LGPL-3.0-only`).
