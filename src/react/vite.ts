@@ -6,7 +6,10 @@ import {publisherJsxVite} from "@/vite/publisher-jsx-vite.js";
 /** Creates Publisher pre-transform and the official React plugin. */
 export function reactorReact(options: ReactOptions = {}): PluginOption[] {
     return [
-        publisherJsxVite({runtimeModule: "reactor-bindings-ts/react/runtime"}),
+        publisherJsxVite({
+            runtimeModule: "reactor-bindings-ts/react/runtime",
+            directChildStrategy: "helper"
+        }),
         react({
             ...options,
             jsxImportSource: options.jsxImportSource ?? "reactor-bindings-ts/react"

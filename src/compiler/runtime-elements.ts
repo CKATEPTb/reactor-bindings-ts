@@ -16,7 +16,8 @@ export interface PublisherChildExpression {
 /** Creates a PublisherChild JSX element. */
 export function createPublisherChildElement(
     component: t.Identifier,
-    expression: PublisherChildExpression
+    expression: PublisherChildExpression,
+    unsupportedHost?: string
 ): t.JSXElement {
     const attributes = [expressionAttribute("source", t.cloneNode(expression.source, true))];
     if (expression.mode === "latest") {
@@ -25,7 +26,32 @@ export function createPublisherChildElement(
     if (expression.lazy) {
         attributes.push(t.jsxAttribute(t.jsxIdentifier("lazy"), null));
     }
+    if (unsupportedHost) {
+        attributes.push(t.jsxAttribute(
+            t.jsxIdentifier("unsupportedHost"),
+            t.stringLiteral(unsupportedHost)
+        ));
+    }
     return selfClosingElement(component, attributes);
+}
+
+/** Creates a direct-child helper call with trailing default arguments omitted. */
+export function createPublisherChildCall(
+    helper: t.Identifier,
+    expression: PublisherChildExpression,
+    unsupportedHost?: string
+): t.CallExpression {
+    const args: t.Expression[] = [t.cloneNode(expression.source, true)];
+    if (expression.mode === "latest" || expression.lazy || unsupportedHost) {
+        args.push(t.stringLiteral(expression.mode));
+    }
+    if (expression.lazy || unsupportedHost) {
+        args.push(t.booleanLiteral(expression.lazy === true));
+    }
+    if (unsupportedHost) {
+        args.push(t.stringLiteral(unsupportedHost));
+    }
+    return t.callExpression(t.cloneNode(helper), args);
 }
 
 /** Creates a PublisherSequence JSX element. */
@@ -34,7 +60,8 @@ export function createPublisherSequenceElement(
     source: t.Expression,
     mode: "incremental" | "latest" | "snapshot",
     mapper: RenderMapper,
-    fallbackRender: MapperFunction
+    fallbackRender: MapperFunction,
+    unsupportedHost?: string
 ): t.JSXElement {
     const attributes = [
         expressionAttribute("source", t.cloneNode(source, true)),
@@ -45,7 +72,44 @@ export function createPublisherSequenceElement(
     if (mapper.keyBy) {
         attributes.push(expressionAttribute("keyBy", mapper.keyBy));
     }
+    if (mapper.contextual) {
+        attributes.push(t.jsxAttribute(t.jsxIdentifier("contextual"), null));
+    }
+    if (unsupportedHost) {
+        attributes.push(t.jsxAttribute(
+            t.jsxIdentifier("unsupportedHost"),
+            t.stringLiteral(unsupportedHost)
+        ));
+    }
     return selfClosingElement(component, attributes);
+}
+
+/** Creates a mapped-value fast-path call with an optional text-only host guard. */
+export function createPublisherSequenceCall(
+    helper: t.Identifier,
+    source: t.Expression,
+    mode: "incremental" | "latest" | "snapshot",
+    mapper: RenderMapper,
+    fallbackRender: MapperFunction,
+    unsupportedHost?: string
+): t.CallExpression {
+    const properties = [
+        t.objectProperty(t.identifier("source"), t.cloneNode(source, true)),
+        t.objectProperty(t.identifier("mode"), t.stringLiteral(mode)),
+        t.objectProperty(t.identifier("render"), mapper.render),
+        t.objectProperty(t.identifier("fallbackRender"), fallbackRender)
+    ];
+    if (mapper.keyBy) {
+        properties.push(t.objectProperty(t.identifier("keyBy"), mapper.keyBy));
+    }
+    if (mapper.contextual) {
+        properties.push(t.objectProperty(t.identifier("contextual"), t.booleanLiteral(true)));
+    }
+    const args: t.Expression[] = [t.objectExpression(properties)];
+    if (unsupportedHost) {
+        args.push(t.stringLiteral(unsupportedHost));
+    }
+    return t.callExpression(t.cloneNode(helper), args);
 }
 
 /** Creates one expression-valued JSX attribute. */

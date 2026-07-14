@@ -1,11 +1,11 @@
-/** Solid JSX child types, compiler keys, and Reactor flatMap overloads. */
+/** Solid JSX child types, reconciliation attributes, and Reactor flatMap overloads. */
 import type {JSX as SolidJSX} from "solid-js";
 import type {Publisher} from "reactor-core-ts";
 
 /** Recursive Solid child extended with Reactor Publishers. */
 type ReactorSolidChild = SolidJSX.Element | Publisher<unknown> | readonly ReactorSolidChild[];
 
-/** Solid intrinsic elements with Publisher-aware children and compiler keys. */
+/** Solid intrinsic elements with Publisher-aware children and reconciliation attributes. */
 type ReactorSolidIntrinsicElements = {
     [Name in keyof SolidJSX.IntrinsicElements]: Omit<
         SolidJSX.IntrinsicElements[Name],
@@ -14,7 +14,7 @@ type ReactorSolidIntrinsicElements = {
         /** Solid children extended with Reactor Publishers. */
         readonly children?: ReactorSolidChild;
         /** Compiler-only reconciliation key. */
-        readonly key?: PropertyKey;
+        readonly "r-key"?: PropertyKey;
     };
 };
 
@@ -39,7 +39,7 @@ declare module "reactor-core-ts" {
 export namespace JSX {
     /** Standard Solid JSX value. */
     export type Element = SolidJSX.Element;
-    /** Intrinsic elements accepting Publishers and compiler keys. */
+    /** Intrinsic elements accepting Publishers and reconciliation attributes. */
     export type IntrinsicElements = ReactorSolidIntrinsicElements;
     /** Solid component instance contract. */
     export interface ElementClass extends SolidJSX.ElementClass {}
@@ -50,6 +50,6 @@ export namespace JSX {
     /** Attributes accepted by compiler-transformed components. */
     export interface IntrinsicAttributes extends SolidJSX.IntrinsicAttributes {
         /** Stable identity used by incremental and snapshot reconciliation. */
-        readonly key?: PropertyKey;
+        readonly "r-key"?: PropertyKey;
     }
 }

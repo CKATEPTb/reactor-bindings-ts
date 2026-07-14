@@ -3,19 +3,37 @@ import {
     computed,
     shallowRef,
     toValue,
-    watchEffect,
+    watch,
     type ComputedRef,
     type MaybeRefOrGetter,
     type ShallowRef
 } from "vue";
 import type {Publisher} from "reactor-core-ts";
+import {isPublisher} from "@/shared/is-publisher.js";
 import {PublisherExternalStore, emptyPublisherSnapshot} from "@/shared/publisher-store.js";
+import type {PublisherSnapshotItem, PublisherValue} from "@/shared/publisher-value.js";
 import type {PublisherKeySelector, PublisherRenderMode, PublisherSnapshot} from "@/shared/types.js";
 
 /** Options accepted by the Vue Publisher composable. */
 export interface UsePublisherOptions<T> {
     /** Append, latest, or authoritative snapshot mode. */
     readonly mode?: PublisherRenderMode;
+    /** Optional stable key selector. */
+    readonly keyBy?: PublisherKeySelector<T>;
+}
+
+/** Append/latest options accepted by the Vue Publisher composable. */
+export interface UsePublisherAppendOptions<T> {
+    /** Append emissions by default or retain one latest slot. */
+    readonly mode?: "append" | "latest";
+    /** Optional stable key selector. */
+    readonly keyBy?: PublisherKeySelector<T>;
+}
+
+/** Snapshot options requiring an array-emitting Publisher. */
+export interface UsePublisherSnapshotOptions<T> {
+    /** Selects authoritative snapshot reconciliation. */
+    readonly mode: "snapshot";
     /** Optional stable key selector. */
     readonly keyBy?: PublisherKeySelector<T>;
 }
@@ -28,14 +46,25 @@ export interface UsePublisherOptions<T> {
  * @param options - Reconciliation mode and key selector.
  * @returns Computed immutable ordered values.
  */
-export function usePublisherValues<T>(
-    source: MaybeRefOrGetter<Publisher<T | readonly T[]>>,
-    options: UsePublisherOptions<T> = {}
-): ComputedRef<readonly T[]> {
+export function usePublisherValues<Source extends MaybeRefOrGetter<Publisher<unknown>>>(
+    source: Source,
+    options?: UsePublisherAppendOptions<PublisherValue<ResolvedPublisher<Source>>>
+): ComputedRef<readonly PublisherValue<ResolvedPublisher<Source>>[]>;
+export function usePublisherValues<Source extends MaybeRefOrGetter<Publisher<readonly unknown[]>>>(
+    source: Source,
+    options: UsePublisherSnapshotOptions<PublisherSnapshotItem<ResolvedPublisher<Source>>>
+): ComputedRef<readonly PublisherSnapshotItem<ResolvedPublisher<Source>>[]>;
+/** Implements item and authoritative snapshot Publisher overloads. */
+export function usePublisherValues(
+    source: MaybeRefOrGetter<Publisher<unknown | readonly unknown[]>>,
+    options: UsePublisherOptions<never> = {}
+): ComputedRef<readonly unknown[]> {
     const snapshot = usePublisherSnapshot(
-        () => toValue(source),
+        () => isPublisher<unknown | readonly unknown[]>(source)
+            ? source
+            : toValue(source),
         () => options.mode ?? "append",
-        () => options.keyBy
+        () => options.keyBy as PublisherKeySelector<unknown> | undefined
     );
     return computed(() => {
         const current = snapshot.value;
@@ -46,6 +75,21 @@ export function usePublisherValues<T>(
     });
 }
 
+/** Resolves a direct, callable, ref-backed, or getter-backed Publisher type. */
+type ResolvedPublisher<Source> = Source extends Publisher<unknown>
+    ? Source
+    : Source extends () => infer Value
+        ? Extract<Value, Publisher<unknown>>
+        : Source extends ValueContainer<infer Value>
+            ? Extract<Value, Publisher<unknown>>
+            : never;
+
+/** Minimal ref-like value container used only for type-level unwrapping. */
+interface ValueContainer<Value> {
+    /** Contained reactive value. */
+    readonly value: Value;
+}
+
 /** Creates and disposes an external store as reactive inputs change. */
 export function usePublisherSnapshot<T>(
     source: () => Publisher<T | readonly T[]> | undefined,
@@ -53,19 +97,27 @@ export function usePublisherSnapshot<T>(
     keyBy: () => PublisherKeySelector<T> | undefined
 ): Readonly<ShallowRef<PublisherSnapshot<T>>> {
     const snapshot = shallowRef<PublisherSnapshot<T>>(emptyPublisherSnapshot<T>());
-    watchEffect(onCleanup => {
-        const currentSource = source();
+    let activeStore: PublisherExternalStore<T> | undefined;
+    watch([source, mode], ([currentSource, currentMode], _previous, onCleanup) => {
         if (!currentSource) {
+            activeStore = undefined;
             snapshot.value = emptyPublisherSnapshot<T>();
             return;
         }
-        const store = new PublisherExternalStore(currentSource, mode(), keyBy());
+        const store = new PublisherExternalStore(currentSource, currentMode, keyBy());
+        activeStore = store;
         const sync = (): void => {
             snapshot.value = store.getSnapshot();
         };
         const unsubscribe = store.subscribe(sync);
         sync();
-        onCleanup(unsubscribe);
-    });
+        onCleanup(() => {
+            unsubscribe();
+            if (activeStore === store) {
+                activeStore = undefined;
+            }
+        });
+    }, {immediate: true, flush: "sync"});
+    watch(keyBy, selector => activeStore?.setKeyBy(selector), {flush: "sync"});
     return snapshot;
 }

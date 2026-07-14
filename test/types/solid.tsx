@@ -9,6 +9,11 @@ const userUpdates = (id: number) => Flux.just({id, name: "Ada"});
 export const solidExamples = <>
     <p>{numbers}</p>
     <p>{numbers!}</p>
+    <p>{[1].map(() => numbers)}</p>
+    <p>{numbers.map(() => users)}</p>
     <ul>{users.map(user => <li r-key={user.id}>{user.name}</li>)}</ul>
     <ul>{numbers.flatMap(id => <li r-key={id}>{userUpdates(id)!.map(user => user.name)}</li>)}</ul>
 </>;
+
+// @ts-expect-error Solid reconciliation uses the compiler-only r-key attribute.
+const unsupportedSolidKey = <li key="unsupported" />;

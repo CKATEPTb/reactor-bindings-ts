@@ -19,7 +19,8 @@ export function publisherJsxPlugin(
 ): PluginObj<PublisherPluginState> {
     const sharedOptions: PublisherJsxPluginOptions = {
         runtimeModule: options.runtimeModule ?? "reactor-bindings-ts/solid/runtime",
-        fallbackKeyMode: "strip"
+        fallbackKeyMode: "strip",
+        directChildStrategy: "component"
     };
     return sharedPublisherJsxPlugin(api, sharedOptions);
 }

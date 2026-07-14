@@ -3,10 +3,12 @@ import {batch, createRenderEffect, onCleanup, type JSX} from "solid-js";
 import type {Publisher} from "reactor-core-ts";
 import {isPublisher} from "@/shared/is-publisher.js";
 import {latestPublisherKey} from "@/shared/keys.js";
+import {assertPublisherHostSupported} from "@/shared/publisher-host.js";
 import {mapMappable} from "@/shared/mappable.js";
 import {subscribeToPublisher} from "@/shared/subscription.js";
 import type {PublisherKeySelector} from "@/shared/types.js";
 import {createRenderState} from "@/solid/runtime/render-state.js";
+import {renderOrdinaryValue} from "@/solid/runtime/publisher-child.js";
 import {SequenceState} from "@/solid/runtime/sequence-state.js";
 import {requireSolidOwner} from "@/solid/runtime/solid-owner.js";
 
@@ -20,11 +22,15 @@ export interface PublisherSequenceProps<T> {
     /** Reconciliation strategy selected from JSX expression shape. */
     readonly mode: PublisherSequenceMode;
     /** Application mapper with its compiler-only key removed. */
-    readonly render: (value: T) => JSX.Element;
+    readonly render: (value: T, index: number, values: readonly T[]) => JSX.Element;
     /** Original mapper retained for ordinary source fallback. */
-    readonly fallbackRender: (value: unknown) => JSX.Element;
+    readonly fallbackRender: (value: unknown, index: number, values: readonly unknown[]) => JSX.Element;
     /** Optional stable key selector extracted from JSX. */
     readonly keyBy?: PublisherKeySelector<T>;
+    /** Whether rendering consumes authoritative index or array context. */
+    readonly contextual?: boolean;
+    /** Text-only host reported by the compiler for runtime validation. */
+    readonly unsupportedHost?: string;
 }
 
 /** Renders mapped Publisher values through independently owned Solid roots. */
@@ -35,44 +41,53 @@ export function PublisherSequence<T>(props: PublisherSequenceProps<T>): JSX.Elem
     let previousSource: unknown;
     let previousMode: PublisherSequenceMode | undefined;
     let hasPreviousSource = false;
+    let previousKeyBy: PublisherKeySelector<T> | undefined;
+    let hasPreviousKeyBy = false;
+    let appliedSnapshotKeyBy: PublisherKeySelector<T> | undefined;
+    let hasAppliedSnapshotKeyBy = false;
 
     /** Lazily allocates fine-grained sequence state. */
     const getSequence = (): SequenceState<T> => {
-        sequence ??= new SequenceState(owner, props.render);
+        sequence ??= new SequenceState(owner, (value, index, values) => renderOrdinaryValue(
+            props.render(value, index, values),
+            false,
+            props.unsupportedHost
+        ), props.contextual === true);
         return sequence;
     };
 
     createRenderEffect(() => {
-        const source = props.source;
-        if (Array.isArray(source)) {
-            const values = source as readonly T[];
-            batch(() => {
-                if (props.mode === "latest") {
-                    sequence?.clear();
-                    renderState.showFallback(values.map(props.render));
-                } else if (props.mode === "snapshot") {
-                    sequence?.clear();
-                    renderState.showFallback(
-                        values.map(value => props.fallbackRender(value))
-                    );
-                } else {
+        const keyBy = props.keyBy;
+        if (
+            hasPreviousKeyBy && previousKeyBy !== keyBy && sequence &&
+            props.mode === "incremental"
+        ) {
+            try {
+                batch(() => {
+                    sequence?.rekey(keyBy);
                     renderState.clear();
-                    getSequence().applySnapshot(values, props.keyBy);
-                }
-            });
-            previousSource = source;
-            previousMode = props.mode;
-            hasPreviousSource = true;
-            return;
+                });
+            } catch (error) {
+                renderState.reportFailure(error);
+            }
         }
+        previousKeyBy = keyBy;
+        hasPreviousKeyBy = true;
+    });
 
+    createRenderEffect(() => {
+        const source = props.source;
         const publisher = isPublisher<T | readonly T[]>(source) ? source : undefined;
         if (!publisher) {
             batch(() => {
                 sequence?.clear();
                 try {
                     renderState.showFallback(
-                        mapMappable(source, props.fallbackRender) as JSX.Element
+                        renderOrdinaryValue(
+                            mapMappable(source, props.fallbackRender),
+                            false,
+                            props.unsupportedHost
+                        )
                     );
                 } catch (error) {
                     renderState.reportFailure(error);
@@ -84,6 +99,8 @@ export function PublisherSequence<T>(props: PublisherSequenceProps<T>): JSX.Elem
             return;
         }
 
+        assertPublisherHostSupported(props.unsupportedHost);
+
         const sourceChanged = hasPreviousSource && previousSource !== source;
         const modeChanged = previousMode !== undefined && previousMode !== props.mode;
         const activeSequence = getSequence();
@@ -91,6 +108,7 @@ export function PublisherSequence<T>(props: PublisherSequenceProps<T>): JSX.Elem
             renderState.clear();
             if (modeChanged || (sourceChanged && props.mode !== "snapshot")) {
                 activeSequence.clear();
+                hasAppliedSnapshotKeyBy = false;
             }
         });
         previousSource = source;
@@ -110,7 +128,14 @@ export function PublisherSequence<T>(props: PublisherSequenceProps<T>): JSX.Elem
                             if (!Array.isArray(value)) {
                                 throw new TypeError("Snapshot Publisher must emit an array");
                             }
-                            activeSequence.applySnapshot(value, props.keyBy);
+                            const keyBy = props.keyBy;
+                            activeSequence.applySnapshot(
+                                value,
+                                keyBy,
+                                hasAppliedSnapshotKeyBy && appliedSnapshotKeyBy !== keyBy
+                            );
+                            appliedSnapshotKeyBy = keyBy;
+                            hasAppliedSnapshotKeyBy = true;
                             appliedSynchronousSnapshot ||= subscribing;
                         } else if (props.mode === "latest") {
                             activeSequence.append(value as T, latestPublisherKey);
@@ -135,7 +160,10 @@ export function PublisherSequence<T>(props: PublisherSequenceProps<T>): JSX.Elem
         });
         subscribing = false;
         if (sourceChanged && props.mode === "snapshot" && !appliedSynchronousSnapshot) {
-            batch(() => activeSequence.clear());
+            batch(() => {
+                activeSequence.clear();
+                hasAppliedSnapshotKeyBy = false;
+            });
         }
         onCleanup(() => {
             active = false;

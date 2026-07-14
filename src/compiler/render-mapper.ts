@@ -14,6 +14,24 @@ export interface RenderMapper {
     readonly render: MapperFunction;
     /** Extracted key selector. */
     readonly keyBy?: MapperFunction;
+    /** Whether rendering consumes snapshot index or array context. */
+    readonly contextual?: boolean;
+}
+
+/** Private Babel metadata copied with cloned snapshot mapper functions. */
+const SNAPSHOT_ARGUMENTS_MARKER = "reactorBindingsSnapshotArguments";
+
+/** Marks a snapshot item mapper whose own `arguments[1]` is the rendered index. */
+export function markSnapshotArgumentsOwner(mapper: MapperFunction): void {
+    if (t.isFunctionExpression(mapper)) {
+        mapper.extra = {...mapper.extra, [SNAPSHOT_ARGUMENTS_MARKER]: true};
+    }
+}
+
+/** Recognizes a cloned snapshot mapper carrying compiler-only metadata. */
+export function isSnapshotArgumentsOwner(node: t.Node): boolean {
+    return t.isFunctionExpression(node) &&
+        node.extra?.[SNAPSHOT_ARGUMENTS_MARKER] === true;
 }
 
 /** Root JSX reconciliation attribute. */
@@ -41,6 +59,50 @@ export function prepareRenderMapper(mapper: MapperFunction): RenderMapper {
     }
     replaceFunctionOutput(keyBy, t.cloneNode(clonedKey.expression, true));
     return {render, keyBy};
+}
+
+/** Preserves the outer snapshot-array binding while lifting its item mapper. */
+export function prepareSnapshotRenderMapper(
+    outerMapper: MapperFunction,
+    itemMapper: MapperFunction
+): RenderMapper {
+    const parameter = outerMapper.params[0];
+    if (!t.isIdentifier(parameter)) {
+        throw new TypeError("Publisher snapshot mapper requires an identifier array parameter");
+    }
+    const prepared = prepareRenderMapper(itemMapper);
+    return {
+        render: wrapSnapshotMapper(prepared.render, parameter.name),
+        ...(usesSnapshotContext(prepared.render, parameter.name) ? {contextual: true} : {}),
+        ...(prepared.keyBy
+            ? {keyBy: wrapSnapshotMapper(prepared.keyBy, parameter.name)}
+            : {})
+    };
+}
+
+/** Detects item renderer dependencies that must update after snapshot reordering. */
+function usesSnapshotContext(mapper: MapperFunction, valuesName: string): boolean {
+    if (mapper.params.length > 1 || t.isFunctionExpression(mapper)) {
+        return true;
+    }
+    const parameterBindings = mapper.params.flatMap(parameter =>
+        Object.keys(t.getBindingIdentifiers(parameter))
+    );
+    if (parameterBindings.includes(valuesName)) {
+        return false;
+    }
+    let contextual = false;
+    t.traverseFast(mapper.body, node => {
+        contextual ||= t.isIdentifier(node, {name: valuesName});
+    });
+    return contextual;
+}
+
+/** Returns whether lifting a nested mapper would skip outer callback statements. */
+export function snapshotMapperHasPrelude(mapper: MapperFunction): boolean {
+    return t.isBlockStatement(mapper.body) && (
+        mapper.body.body.length !== 1 || !t.isReturnStatement(mapper.body.body[0])
+    );
 }
 
 /** Converts JSX returned from flatMap into a lazy one-value input. */
@@ -132,4 +194,39 @@ function removeKeyAttribute(element: t.JSXElement): void {
     element.openingElement.attributes = element.openingElement.attributes.filter(attribute =>
         !(t.isJSXAttribute(attribute) && t.isJSXIdentifier(attribute.name, {name: "r-key"}))
     );
+}
+
+/** Calls a lifted item mapper with value, index, and its original outer array. */
+function wrapSnapshotMapper(mapper: MapperFunction, valuesName: string): MapperFunction {
+    const identifiers = new Set<string>();
+    t.traverseFast(mapper, node => {
+        if (t.isIdentifier(node)) {
+            identifiers.add(node.name);
+        }
+    });
+    const value = uniqueParameter("_publisherValue", identifiers, valuesName);
+    const index = uniqueParameter("_publisherIndex", identifiers, valuesName, value.name);
+    const values = t.identifier(valuesName);
+    return t.arrowFunctionExpression(
+        [value, index, values],
+        t.callExpression(t.cloneNode(mapper, true), [
+            t.cloneNode(value),
+            t.cloneNode(index),
+            t.cloneNode(values)
+        ])
+    );
+}
+
+/** Creates a wrapper parameter that cannot capture a free mapper identifier. */
+function uniqueParameter(
+    preferred: string,
+    identifiers: ReadonlySet<string>,
+    ...reserved: string[]
+): t.Identifier {
+    let name = preferred;
+    let suffix = 2;
+    while (identifiers.has(name) || reserved.includes(name)) {
+        name = `${preferred}${suffix++}`;
+    }
+    return t.identifier(name);
 }

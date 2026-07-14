@@ -9,17 +9,36 @@ import {
     type Owner
 } from "solid-js";
 import {createStore, reconcile} from "solid-js/store";
+import {
+    cloneStoreValue,
+    readStoreValueShape,
+    type StoreValueShape
+} from "@/solid/runtime/clone-store-value.js";
 
 /** A rendered value, its reactive view, and its ownership lifecycle. */
 export interface SequenceEntry<T> {
     /** Reactive accessor consumed by Solid list reconciliation. */
     readonly view: Accessor<JSX.Element>;
+    /** Value identity exposed to the mapper and its authoritative array context. */
+    readonly value: Accessor<T>;
+    /** Latest unwrapped Publisher value used by application key selectors. */
+    readonly sourceValue: Accessor<T>;
     /** Validates that a value can update this entry without changing shape. */
     validate(value: T): void;
     /** Reconciles a new value into the existing entry. */
     update(value: T): void;
+    /** Updates native Array.map positional context after all entries exist. */
+    updateContext(index: number, values: readonly T[]): void;
     /** Disposes the entry root and all nested subscriptions. */
     dispose(): void;
+}
+
+/** Reactive positional context supplied to authoritative snapshot mappers. */
+interface SequenceRenderContext<T> {
+    /** Current ordered position. */
+    readonly index: number;
+    /** Current authoritative values. */
+    readonly values: readonly T[];
 }
 
 /**
@@ -31,35 +50,67 @@ export interface SequenceEntry<T> {
 export function createSequenceEntry<T>(
     owner: Owner,
     initialValue: T,
-    render: (value: T) => JSX.Element
+    render: (value: T, index: number, values: readonly T[]) => JSX.Element,
+    initialIndex = 0,
+    initialValues: readonly T[] = [],
+    contextual = false
 ): SequenceEntry<T> {
     const entry = runWithOwner(owner, () => createRoot<SequenceEntry<T>>(dispose => {
-        const storeShape = readStoreShape(initialValue);
+        const [context, setContext] = createSignal(
+            {index: initialIndex, values: initialValues},
+            {equals: false}
+        );
+        let sourceValue = initialValue;
+        const storeShape = readStoreValueShape(initialValue);
         if (storeShape) {
-            const [state, setState] = createStore(initialValue as object);
-            const view = createMemo(() => render(state as T));
+            const [state, setState] = createStore(cloneStoreValue(initialValue as object));
+            const view = createMemo(() => {
+                const current = context();
+                return render(state as T, current.index, current.values);
+            });
             const validate = (value: T): void => validateStoreShape(storeShape, value);
             return {
                 view,
+                value: () => state as T,
+                sourceValue: () => sourceValue,
                 validate,
                 update(value) {
                     validate(value);
-                    setState(reconcile(value as object, {merge: true}));
+                    sourceValue = value;
+                    setState(reconcile(cloneStoreValue(value as object), {merge: true}));
                 },
+                updateContext: (index, values) => updateContext(
+                    setContext,
+                    contextual,
+                    index,
+                    values
+                ),
                 dispose
             };
         }
 
         const [value, setValue] = createSignal(initialValue, {equals: false});
-        const view = createMemo(() => render(value()));
+        const view = createMemo(() => {
+            const current = context();
+            return render(value(), current.index, current.values);
+        });
         const validate = (nextValue: T): void => validateStoreShape(undefined, nextValue);
         return {
             view,
+            value,
+            sourceValue: () => sourceValue,
             validate,
             update(nextValue) {
                 validate(nextValue);
+                sourceValue = nextValue;
                 setValue(() => nextValue);
             },
+            updateContext: (index, values) => updateContext(
+                setContext,
+                contextual,
+                index,
+                values
+            ),
             dispose
         };
     }));
@@ -70,26 +121,21 @@ export function createSequenceEntry<T>(
     return entry;
 }
 
-/** Store-backed value shapes requiring distinct reconciliation strategies. */
-type StoreShape = "array" | "record";
-
-/** Returns the store shape of a safely reconcilable value. */
-function readStoreShape(value: unknown): StoreShape | undefined {
-    if (value === null || typeof value !== "object") {
-        return undefined;
+/** Updates snapshot mapper context only when the caller supplied it. */
+function updateContext<T>(
+    setContext: (value: SequenceRenderContext<T>) => unknown,
+    contextual: boolean,
+    index: number,
+    values: readonly T[]
+): void {
+    if (contextual) {
+        setContext({index, values});
     }
-    if (Array.isArray(value)) {
-        return "array";
-    }
-    const prototype = Object.getPrototypeOf(value);
-    return prototype === Object.prototype || prototype === null
-        ? "record"
-        : undefined;
 }
 
 /** Rejects updates that Solid stores cannot safely reconcile in place. */
-function validateStoreShape(expected: StoreShape | undefined, value: unknown): void {
-    const actual = readStoreShape(value);
+function validateStoreShape(expected: StoreValueShape | undefined, value: unknown): void {
+    const actual = readStoreValueShape(value);
     if (actual === expected) {
         return;
     }

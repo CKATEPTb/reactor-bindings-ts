@@ -15,7 +15,10 @@ export interface ReactorVueOptions {
 /** Creates Publisher JSX pre-transform plus official Vue SFC and JSX plugins. */
 export function reactorVue(options: ReactorVueOptions = {}): PluginOption[] {
     return [
-        publisherJsxVite({runtimeModule: "reactor-bindings-ts/vue/runtime"}),
+        publisherJsxVite({
+            runtimeModule: "reactor-bindings-ts/vue/runtime",
+            directChildStrategy: "helper"
+        }),
         vue(options.vue),
         vueJsx(options.jsx)
     ];

@@ -1,7 +1,7 @@
 /** Conservative static Publisher impossibility checks. */
 import type {NodePath} from "@babel/core";
 import * as t from "@babel/types";
-import {readMapExpression, unwrapExpression} from "@/compiler/expression.js";
+import {readFlatMapExpression, readMapExpression, unwrapExpression} from "@/compiler/expression.js";
 
 /** Returns true only when an expression cannot satisfy Publisher structurally. */
 export function isDefinitelyNonPublisher(node: t.Node | null | undefined): boolean {
@@ -14,7 +14,7 @@ export function isDefinitelyNonPublisher(node: t.Node | null | undefined): boole
         t.isBinaryExpression(expression) || t.isUnaryExpression(expression) ||
         t.isUpdateExpression(expression) || t.isFunctionExpression(expression) ||
         t.isArrowFunctionExpression(expression) || t.isJSXElement(expression) ||
-        t.isJSXFragment(expression) || t.isArrayExpression(expression)
+        t.isJSXFragment(expression)
     ) {
         return true;
     }
@@ -31,6 +31,11 @@ export function isDefinitelyNonPublisher(node: t.Node | null | undefined): boole
     }
     if (t.isAssignmentExpression(expression, {operator: "="})) {
         return isDefinitelyNonPublisher(expression.right);
+    }
+    if (t.isArrayExpression(expression)) {
+        return expression.elements.every(element =>
+            element === null || !t.isSpreadElement(element) && isDefinitelyNonPublisher(element)
+        );
     }
     return t.isObjectExpression(expression) && expression.properties.every(property => {
         if (t.isSpreadElement(property) || property.computed) {
@@ -74,11 +79,51 @@ export function isDefinitelyNonPublisherAtPath(
         return false;
     }
     const callPath = functionPath.parentPath;
-    const map = callPath?.isCallExpression() ? readMapExpression(callPath.node) : undefined;
-    if (!map || map.mapper !== functionPath.node || !t.isArrayExpression(map.source)) {
+    const map = callPath?.isCallExpression()
+        ? readMapExpression(callPath.node) ?? readFlatMapExpression(callPath.node)
+        : undefined;
+    const source = map && callPath
+        ? readArrayBinding(map.source, callPath, new Set<t.Node>())
+        : undefined;
+    if (!map || map.mapper !== functionPath.node || !source) {
         return false;
     }
-    return map.source.elements.every(element =>
+    return source.elements.every(element =>
         element !== null && !t.isSpreadElement(element) && isDefinitelyNonPublisher(element)
     );
+}
+
+/**
+ * Recognizes array literals and constant aliases without guessing from a runtime value.
+ *
+ * @param node - Candidate array expression.
+ * @param path - Babel path whose lexical scope contains the expression.
+ * @returns Whether the expression is guaranteed to be a native array.
+ */
+export function isDefinitelyArrayAtPath(
+    node: t.Node | null | undefined,
+    path: NodePath
+): boolean {
+    return readArrayBinding(node, path, new Set<t.Node>()) !== undefined;
+}
+
+/** Follows constant aliases while guarding against malformed binding cycles. */
+function readArrayBinding(
+    node: t.Node | null | undefined,
+    path: NodePath,
+    seen: Set<t.Node>
+): t.ArrayExpression | undefined {
+    const expression = unwrapExpression(node);
+    if (t.isArrayExpression(expression)) {
+        return expression;
+    }
+    if (!t.isIdentifier(expression)) {
+        return undefined;
+    }
+    const binding = path.scope.getBinding(expression.name);
+    if (!binding?.constant || !binding.path.isVariableDeclarator() || seen.has(binding.path.node)) {
+        return undefined;
+    }
+    seen.add(binding.path.node);
+    return readArrayBinding(binding.path.node.init, binding.path, seen);
 }

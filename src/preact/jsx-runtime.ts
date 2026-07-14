@@ -1,5 +1,5 @@
 /** Preact JSX runtime and Publisher-aware child types. */
-import type {ComponentChild, JSX as PreactJSX} from "preact";
+import type {ComponentChild, ComponentChildren, JSX as PreactJSX} from "preact";
 import type {Publisher} from "reactor-core-ts";
 export {Fragment, jsx, jsxs} from "preact/jsx-runtime";
 
@@ -14,7 +14,9 @@ export namespace JSX {
     /** Preact children property contract. */
     export type ElementChildrenAttribute = PreactJSX.ElementChildrenAttribute;
     /** Preact library-managed attributes. */
-    export type LibraryManagedAttributes<C, P> = PreactJSX.LibraryManagedAttributes<C, P>;
+    export type LibraryManagedAttributes<C, P> = WithPublisherChildren<
+        PreactJSX.LibraryManagedAttributes<C, P>
+    >;
     /** Preact intrinsic attributes. */
     export type IntrinsicAttributes = PreactJSX.IntrinsicAttributes;
     /** Intrinsic elements accepting Publishers as children. */
@@ -27,7 +29,19 @@ export namespace JSX {
 }
 
 /** Recursive Preact child extended with Reactor Publishers. */
-type ReactorPreactChild = ComponentChild | Publisher<unknown> | readonly ReactorPreactChild[];
+export type ReactorPreactChild = ComponentChild | Publisher<unknown> | readonly ReactorPreactChild[];
+
+/** Extends only component children that can receive the compiler's rendered value. */
+type PublisherAwarePreactChild<Child> = ComponentChildren extends Child
+    ? Child | ReactorPreactChild
+    : PreactJSX.Element extends Child
+        ? Child | Publisher<unknown>
+        : Child;
+
+/** Extends an existing component children prop without changing its optionality. */
+type WithPublisherChildren<Props> = {
+    [Key in keyof Props]: Key extends "children" ? PublisherAwarePreactChild<Props[Key]> : Props[Key];
+};
 
 declare module "reactor-core-ts" {
     /** Preact JSX overloads available to Publisher-aware TSX. */

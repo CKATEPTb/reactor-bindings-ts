@@ -17,7 +17,8 @@ export function reactorSolid(options: ReactorSolidOptions = {}): PluginOption[] 
     return [
         publisherJsxVite({
             runtimeModule,
-            fallbackKeyMode: "strip"
+            fallbackKeyMode: "strip",
+            directChildStrategy: "component"
         }),
         solidPlugin(solidOptions as Partial<SolidPluginOptions>)
     ];

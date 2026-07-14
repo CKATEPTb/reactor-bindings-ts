@@ -6,8 +6,12 @@ import * as t from "@babel/types";
 export interface PublisherPluginState extends PluginPass {
     /** Local PublisherChild identifier. */
     publisherChildId?: t.Identifier;
+    /** Local direct-child fast-path helper identifier. */
+    publisherChildHelperId?: t.Identifier;
     /** Local PublisherSequence identifier. */
     publisherSequenceId?: t.Identifier;
+    /** Local mapped-value fast-path helper identifier. */
+    publisherSequenceHelperId?: t.Identifier;
     /** Local lazyJsxValue identifier. */
     lazyJsxValueId?: t.Identifier;
     /** Shared import declaration. */
@@ -22,6 +26,21 @@ export function ensurePublisherChildImport(
     return state.publisherChildId;
 }
 
+/** Ensures a direct-child fast-path helper import. */
+export function ensurePublisherChildHelperImport(
+    path: NodePath,
+    state: PublisherPluginState,
+    runtime: string
+): t.Identifier {
+    state.publisherChildHelperId ??= ensureRuntimeImport(
+        path,
+        state,
+        runtime,
+        "renderPublisherChild"
+    );
+    return state.publisherChildHelperId;
+}
+
 /** Ensures a PublisherSequence runtime import. */
 export function ensurePublisherSequenceImport(
     path: NodePath<t.JSXExpressionContainer>, state: PublisherPluginState, runtime: string
@@ -30,9 +49,24 @@ export function ensurePublisherSequenceImport(
     return state.publisherSequenceId;
 }
 
+/** Ensures a mapped-sequence fast-path helper import. */
+export function ensurePublisherSequenceHelperImport(
+    path: NodePath,
+    state: PublisherPluginState,
+    runtime: string
+): t.Identifier {
+    state.publisherSequenceHelperId ??= ensureRuntimeImport(
+        path,
+        state,
+        runtime,
+        "renderPublisherSequence"
+    );
+    return state.publisherSequenceHelperId;
+}
+
 /** Ensures a lazyJsxValue runtime import. */
 export function ensureLazyJsxValueImport(
-    path: NodePath<t.JSXExpressionContainer>, state: PublisherPluginState, runtime: string
+    path: NodePath, state: PublisherPluginState, runtime: string
 ): t.Identifier {
     state.lazyJsxValueId ??= ensureRuntimeImport(path, state, runtime, "lazyJsxValue");
     return state.lazyJsxValueId;
@@ -40,6 +74,10 @@ export function ensureLazyJsxValueImport(
 
 /** Returns whether a node is an injected runtime component. */
 export function isInjectedRuntimeElement(node: t.Node | null | undefined, state: PublisherPluginState): boolean {
+    if (t.isCallExpression(node) && t.isIdentifier(node.callee)) {
+        return node.callee.name === state.publisherChildHelperId?.name ||
+            node.callee.name === state.publisherSequenceHelperId?.name;
+    }
     if (!t.isJSXElement(node) || !t.isJSXIdentifier(node.openingElement.name)) {
         return false;
     }
@@ -49,10 +87,11 @@ export function isInjectedRuntimeElement(node: t.Node | null | undefined, state:
 
 /** Adds one named runtime import. */
 function ensureRuntimeImport(
-    path: NodePath<t.JSXExpressionContainer>,
+    path: NodePath,
     state: PublisherPluginState,
     runtime: string,
-    imported: "PublisherChild" | "PublisherSequence" | "lazyJsxValue"
+    imported: "PublisherChild" | "PublisherSequence" | "lazyJsxValue" |
+        "renderPublisherChild" | "renderPublisherSequence"
 ): t.Identifier {
     const program = path.findParent(parent => parent.isProgram()) as NodePath<t.Program> | null;
     if (!program) {

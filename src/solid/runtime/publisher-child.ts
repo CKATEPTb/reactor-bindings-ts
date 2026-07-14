@@ -1,7 +1,7 @@
 /** Runtime component for direct Solid Publisher children and lazy flatMap JSX. */
 import {batch, createRenderEffect, onCleanup, type JSX} from "solid-js";
 import type {Publisher} from "reactor-core-ts";
-import {isPublisher} from "@/shared/is-publisher.js";
+import {containsPublisher, isPublisher} from "@/shared/is-publisher.js";
 import {
     isLazyJsxValue,
     lazyJsxValueKey
@@ -9,6 +9,7 @@ import {
 import {subscribeToPublisher} from "@/shared/subscription.js";
 import type {PublisherKeySelector} from "@/shared/types.js";
 import {latestPublisherKey} from "@/shared/keys.js";
+import {assertPublisherHostSupported} from "@/shared/publisher-host.js";
 import {createRenderState} from "@/solid/runtime/render-state.js";
 import {SequenceState} from "@/solid/runtime/sequence-state.js";
 import {requireSolidOwner} from "@/solid/runtime/solid-owner.js";
@@ -24,6 +25,8 @@ export interface PublisherChildProps {
     readonly mode?: PublisherChildMode;
     /** Whether an ordinary array contains compiler-generated lazy JSX. */
     readonly lazy?: boolean;
+    /** Text-only host reported by the compiler for runtime validation. */
+    readonly unsupportedHost?: string;
 }
 
 /** Renders a Publisher or passes through an ordinary Solid child expression. */
@@ -36,7 +39,11 @@ export function PublisherChild(props: PublisherChildProps): JSX.Element {
 
     /** Lazily allocates fine-grained sequence state. */
     const getSequence = (): SequenceState<unknown> => {
-        sequence ??= new SequenceState(owner, asJsxElement);
+        sequence ??= new SequenceState(owner, value => renderOrdinaryValue(
+            asJsxElement(value),
+            false,
+            props.unsupportedHost
+        ));
         return sequence;
     };
 
@@ -48,11 +55,16 @@ export function PublisherChild(props: PublisherChildProps): JSX.Element {
             previousMode = undefined;
             batch(() => {
                 sequence?.clear();
-                renderState.showFallback(renderOrdinaryValue(source, props.lazy === true));
+                renderState.showFallback(renderOrdinaryValue(
+                    source,
+                    props.lazy === true,
+                    props.unsupportedHost
+                ));
             });
             return;
         }
 
+        assertPublisherHostSupported(props.unsupportedHost);
         const activeSequence = getSequence();
         batch(() => {
             renderState.clear();
@@ -108,10 +120,41 @@ export function PublisherChild(props: PublisherChildProps): JSX.Element {
 }
 
 /** Renders compiler-generated lazy values produced by an ordinary flatMap. */
-function renderOrdinaryValue(value: unknown, lazy: boolean): JSX.Element {
-    return lazy && Array.isArray(value)
-        ? value.map(asJsxElement)
+export function renderOrdinaryValue(
+    value: unknown,
+    lazy: boolean,
+    unsupportedHost?: string
+): JSX.Element {
+    if (isPublisher(value)) {
+        assertPublisherHostSupported(unsupportedHost);
+        return PublisherChild({
+            source: value,
+            ...(unsupportedHost === undefined ? {} : {unsupportedHost})
+        });
+    }
+    if (!Array.isArray(value)) {
+        return value as JSX.Element;
+    }
+    if (lazy) {
+        return value.map(asJsxElement);
+    }
+    return containsPublisher(value)
+        ? renderPublisherArray(value, unsupportedHost)
         : value as JSX.Element;
+}
+
+/** Recursively binds Publisher entries nested in an ordinary array. */
+function renderPublisherArray(values: readonly unknown[], unsupportedHost?: string): JSX.Element[] {
+    return values.map(item => {
+        if (Array.isArray(item)) {
+            return renderPublisherArray(item, unsupportedHost);
+        }
+        if (!isPublisher(item)) {
+            return item as JSX.Element;
+        }
+        assertPublisherHostSupported(unsupportedHost);
+        return PublisherChild({source: item});
+    });
 }
 
 /** Converts a normal or compiler-generated lazy value to Solid JSX. */

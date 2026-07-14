@@ -14,7 +14,9 @@ export namespace JSX {
     /** React children property contract. */
     export type ElementChildrenAttribute = React.JSX.ElementChildrenAttribute;
     /** React library-managed attributes. */
-    export type LibraryManagedAttributes<C, P> = React.JSX.LibraryManagedAttributes<C, P>;
+    export type LibraryManagedAttributes<C, P> = WithPublisherChildren<
+        React.JSX.LibraryManagedAttributes<C, P>
+    >;
     /** React intrinsic attributes. */
     export type IntrinsicAttributes = React.JSX.IntrinsicAttributes;
     /** React intrinsic class attributes. */
@@ -29,7 +31,19 @@ export namespace JSX {
 }
 
 /** Recursive React child extended with Reactor Publishers. */
-type ReactorReactChild = React.ReactNode | Publisher<unknown> | readonly ReactorReactChild[];
+export type ReactorReactChild = React.ReactNode | Publisher<unknown> | readonly ReactorReactChild[];
+
+/** Extends only component children that can receive the compiler's rendered value. */
+type PublisherAwareReactChild<Child> = React.ReactNode extends Child
+    ? Child | ReactorReactChild
+    : React.JSX.Element extends Child
+        ? Child | Publisher<unknown>
+        : Child;
+
+/** Extends an existing component children prop without changing its optionality. */
+type WithPublisherChildren<Props> = {
+    [Key in keyof Props]: Key extends "children" ? PublisherAwareReactChild<Props[Key]> : Props[Key];
+};
 
 declare module "reactor-core-ts" {
     /** React JSX overloads available to Publisher-aware TSX. */
