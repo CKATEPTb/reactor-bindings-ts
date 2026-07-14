@@ -237,25 +237,6 @@ The root `r-key` controls upserts in the outer list. The nested `!` maintains on
 latest-value slot inside that entry. The callback must return JSX directly,
 either with a concise body or one top-level `return` statement.
 
-An empty nested Publisher controls only its child position; it does not remove
-the outer JSX. Remember that the second argument of `Flux.range(start, count)`
-is a count:
-
-```tsx
-// The first <li> is empty because Flux.range(0, 0) emits nothing.
-Flux.range(0, 10).flatMap(value => (
-    <li>{Flux.range(0, value)}</li>
-))
-
-// Inclusive 0...value output.
-Flux.range(0, 10).flatMap(value => (
-    <li>{Flux.range(0, value + 1)}</li>
-))
-```
-
-The parent cannot be inferred from nested emptiness: the nested Publisher may
-emit asynchronously, never emit, fail, or be only one of several children.
-
 ## Framework setup
 
 The commands below are self-contained for each framework. Omit dependencies
@@ -773,11 +754,6 @@ The Publisher JSX transform is not running. Confirm that the framework's
 Set the framework-specific `jsxImportSource` in the TypeScript configuration.
 The Vite plugin performs the runtime transform; `jsxImportSource` provides the
 matching types and JSX runtime. Both are required.
-
-### The first nested `<li>` is empty
-
-`Flux.range(start, count)` treats its second argument as a count. For inclusive
-`0...value` output, use `Flux.range(0, value + 1)`.
 
 ### A list never removes old entries
 
