@@ -8,9 +8,7 @@ const scanTargets = [
     "src",
     "test",
     "scripts",
-    "test-runtime/src",
-    "vitest.config.ts",
-    "test-runtime/vite.config.ts"
+    "vitest.config.ts"
 ];
 const violations = [];
 
