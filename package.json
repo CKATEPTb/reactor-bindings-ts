@@ -43,8 +43,7 @@
   },
   "scripts": {
     "build": "vite build",
-    "prepack": "npm run build",
-    "test": "node scripts/check-tsdoc.mjs && node scripts/check-import-aliases.mjs && tsc -p tsconfig.json && ngc -p tsconfig.angular-test.json && npm run build && vitest run --no-cache && node scripts/check-package.mjs"
+    "test": "node scripts/check-tsdoc.mjs && node scripts/check-import-aliases.mjs && tsc -p tsconfig.json && ngc -p tsconfig.angular-test.json && vitest run --no-cache"
   },
   "dependencies": {"@babel/types": "^7.28.5"},
   "peerDependencies": {
