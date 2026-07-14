@@ -39,7 +39,8 @@
   },
   "scripts": {
     "build": "node scripts/clean-dist.mjs && ngc -p tsconfig.build.json && node scripts/rewrite-dist-aliases.mjs",
-    "test": "node scripts/check-tsdoc.mjs && node scripts/check-import-aliases.mjs && tsc -p tsconfig.json && npm run build && vitest run && node scripts/check-package.mjs"
+    "prepack": "npm run build",
+    "test": "node scripts/check-tsdoc.mjs && node scripts/check-import-aliases.mjs && tsc -p tsconfig.json && ngc -p tsconfig.angular-test.json && npm run build && vitest run --no-cache && node scripts/check-package.mjs"
   },
   "dependencies": {"@babel/types": "^7.28.5"},
   "peerDependencies": {

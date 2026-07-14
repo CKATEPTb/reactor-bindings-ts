@@ -132,6 +132,10 @@ const userUpdates = Flux.from(userPublisher);
 <span>{userUpdates.map(user => user.name)}</span>
 ```
 
+JSX integrations also find Publishers recursively inside ordinary arrays, so
+expressions such as `{["Status: ", statusUpdates]}` bind the nested Publisher
+without turning the surrounding array into a stream.
+
 Completion keeps the values already rendered. It does not clear the view.
 
 ### Latest-value mode with `!`
@@ -214,6 +218,11 @@ and reorders entries to match the emitted array. The binding does not sort the
 array itself. Duplicate `r-key` values are errors. Without `r-key`, array indices provide
 identity.
 
+The inner mapper receives the same `(value, index, array)` arguments as native
+`Array.map`. The outer snapshot callback must return `list.map(...)` directly;
+put preprocessing upstream or inside the inner mapper so the compiler does not
+have to lift local state out of scope.
+
 `collectList()` emits one complete array after its upstream completes. A live
 list that needs repeated deletion or reordering should use a Publisher that
 emits repeated complete arrays with the same nested-map shape.
@@ -234,8 +243,10 @@ remains a real Reactor operator, while the active framework owns DOM creation:
 ```
 
 The root `r-key` controls upserts in the outer list. The nested `!` maintains one
-latest-value slot inside that entry. The callback must return JSX directly,
-either with a concise body or one top-level `return` statement.
+latest-value slot inside that entry. A `flatMap` result may be stored when all
+of its consumers render it directly, but its callback must return JSX directly,
+either with a concise body or one top-level `return` statement. Put fluent
+operators before `flatMap`; values after it are reserved for lazy rendering.
 
 ## Framework setup
 
@@ -390,8 +401,8 @@ export function Users({source}: {source: Publisher<User>}) {
 ```
 
 Hook options are `mode: "append" | "latest" | "snapshot"` and `keyBy`. Keep
-`source` and `keyBy` references stable when possible; changing either creates a
-new binding and subscription.
+`source` stable when it represents the same stream. Changing `keyBy` updates
+reconciliation after commit without restarting that Publisher.
 
 ### Preact
 
@@ -708,8 +719,11 @@ default mode is `"append"`.
 
 - A binding subscribes when its framework consumer mounts.
 - Unmounting or destroying the consumer cancels the subscription.
-- Changing an explicit source, mode, or key selector replaces the old binding;
-  late signals from the cancelled source are ignored.
+- Changing an explicit source or mode replaces the old binding; late signals
+  from the cancelled source are ignored.
+- Solid, React, Preact, Vue, and Angular update a changed key selector without
+  restarting the same Publisher. Existing incremental entries are re-keyed
+  before the next emission.
 - Remounting a cold Publisher subscribes again and may rerun its work.
 - Publisher completion retains the last rendered state.
 - Publisher failures, invalid snapshot values, duplicate snapshot keys, and
@@ -719,15 +733,21 @@ default mode is `"append"`.
   cannot be synchronously replayed. The client subscription fills the view
   after hydration.
 
-Keep explicit `source` and `keyBy` references stable in hooks, composables,
-directives, and pipes when possible. A new function identity is a new binding
-configuration.
+Keep explicit `source` references stable when they represent the same stream.
+Stable `keyBy` references still avoid unnecessary selector comparisons and make
+the intended identity rule clearer, but a fresh selector alone does not restart
+the Publisher in React, Preact, Vue, or Angular.
 
 ## Performance and design
 
 - Keyed lookup uses a `Map` and is O(1).
 - Reconciling a complete snapshot is O(n), including duplicate-key validation
   and ordering.
+- Shared-store bindings in React, Preact, Vue, and Angular apply synchronous
+  append bursts with one array copy and one framework notification; latest and
+  snapshot modes apply only the final value from the same burst.
+- Those bindings avoid an unused lookup map for unkeyed appends, and unchanged
+  immutable snapshots do not trigger a framework update.
 - Retained keys preserve framework renderer-entry identity and avoid rebuilding
   unrelated entries; compatible roots can reuse their existing DOM/view.
 - Framework snapshots are cached and only change after a Publisher signal.
@@ -735,10 +755,11 @@ configuration.
   does not claim that every complete update is O(1).
 - Subscription cleanup is idempotent, and late signals from replaced bindings
   are ignored.
-- The compiler leaves literals, static arrays, arithmetic, templates, and other
-  provably ordinary expressions on the framework-native path.
-- Ambiguous values receive one structural Publisher check and retain their
-  normal `map`/`flatMap` behavior when they are not Publishers.
+- The compiler leaves literals, native array operations, arithmetic, templates,
+  and other provably ordinary expressions on the framework-native path.
+- Ambiguous React, Preact, and Vue values receive one structural Publisher check
+  without allocating a component for an ordinary value. Their native
+  `map`/`flatMap` behavior is retained when they are not Publishers.
 
 ## Troubleshooting
 
@@ -763,9 +784,17 @@ use the snapshot nested-map shape in JSX, `mode="snapshot"` in Vue, or
 
 ### A binding subscribes again after a render
 
-For explicit hooks/components/composables, keep the Publisher and `keyBy`
-selector stable. Define selectors at module scope or memoize them with the
-framework rather than creating a new function on every render.
+Keep the Publisher reference stable; constructing a new cold Publisher during
+every render intentionally starts new work. React, Preact, Vue, and Angular no
+longer resubscribe only because `keyBy` has a new function identity, although a
+stable selector is still preferable when its identity rule has not changed.
+
+### A Publisher is used inside `textarea`, `title`, or `option`
+
+These text-only hosts cannot safely contain a framework component boundary in
+React, Preact, or Vue TSX. The compiler reports a direct error for a real
+Publisher there. Materialize the current value with the framework hook or
+composable and pass the resulting string or number to the host instead.
 
 ## Package entry points
 
@@ -786,3 +815,29 @@ framework rather than creating a new function on every render.
 
 Most JSX applications should use the appropriate `/vite` module instead of
 configuring Babel manually.
+
+## Development
+
+Install the pinned development dependencies and run the complete validation
+suite:
+
+```sh
+npm ci
+npm test
+```
+
+## Publishing
+
+`npm pack` and `npm publish` automatically run a clean production build through
+the package's `prepack` script. To inspect the package contents locally without
+publishing them, run:
+
+```sh
+npm pack --dry-run
+```
+
+## License
+
+This project is licensed under the
+[GNU Lesser General Public License v3.0 only](./LICENSE.md). The short
+[license notice](./LICENSE) identifies the package's SPDX license expression.
