@@ -38,15 +38,8 @@
     "./package.json": "./package.json"
   },
   "scripts": {
-    "clean": "node scripts/clean-dist.mjs",
-    "build": "npm run clean && ngc -p tsconfig.build.json && node scripts/rewrite-dist-aliases.mjs",
-    "typecheck": "tsc -p tsconfig.json",
-    "test": "npm run verify",
-    "test:unit": "vitest run",
-    "docs:check": "node scripts/check-tsdoc.mjs",
-    "imports:check": "node scripts/check-import-aliases.mjs",
-    "package:check": "node scripts/check-package.mjs",
-    "verify": "npm run docs:check && npm run imports:check && npm run typecheck && npm run build && npm run test:unit && npm run demo:build && npm run package:check"
+    "build": "node scripts/clean-dist.mjs && ngc -p tsconfig.build.json && node scripts/rewrite-dist-aliases.mjs",
+    "test": "node scripts/check-tsdoc.mjs && node scripts/check-import-aliases.mjs && tsc -p tsconfig.json && npm run build && vitest run && node scripts/check-package.mjs"
   },
   "dependencies": {"@babel/types": "^7.28.5"},
   "peerDependencies": {
