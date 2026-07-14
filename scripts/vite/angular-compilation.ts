@@ -1,7 +1,7 @@
 /** Vite lifecycle integration for Angular partial compilation and declarations. */
 import {spawn} from "node:child_process";
 import {createRequire} from "node:module";
-import {copyFile, mkdir, readdir, rm} from "node:fs/promises";
+import {mkdir, readFile, readdir, rm, writeFile} from "node:fs/promises";
 import path from "node:path";
 import type {Plugin} from "vite";
 
@@ -27,7 +27,6 @@ export function angularCompilation(options: AngularCompilationOptions): Plugin {
         },
         async writeBundle() {
             await copyDeclarations(stageRoot, distRoot);
-            await runNode(root, path.join(root, "scripts", "rewrite-dist-aliases.mjs"));
         },
         async closeBundle() {
             await rm(stageRoot, {recursive: true, force: true});
@@ -61,15 +60,45 @@ function runNode(root: string, script: string, args: readonly string[] = []): Pr
 }
 
 /** Copies declaration files from Angular's staging tree into Vite's output tree. */
-async function copyDeclarations(source: string, target: string): Promise<void> {
+async function copyDeclarations(
+    source: string,
+    target: string,
+    distRoot: string = target
+): Promise<void> {
     for (const entry of await readdir(source, {withFileTypes: true})) {
         const sourcePath = path.join(source, entry.name);
         const targetPath = path.join(target, entry.name);
         if (entry.isDirectory()) {
-            await copyDeclarations(sourcePath, targetPath);
+            await copyDeclarations(sourcePath, targetPath, distRoot);
         } else if (entry.name.endsWith(".d.ts")) {
             await mkdir(path.dirname(targetPath), {recursive: true});
-            await copyFile(sourcePath, targetPath);
+            const declaration = await readFile(sourcePath, "utf8");
+            await writeFile(targetPath, rewriteDeclarationAliases(declaration, targetPath, distRoot));
         }
     }
+}
+
+/** Resolves the source-only alias while declarations move into their final directory. */
+function rewriteDeclarationAliases(source: string, file: string, distRoot: string): string {
+    const rewritten = source.replace(
+        /(["'])@\/([^"']+)\1/g,
+        (_match, quote: string, modulePath: string) => {
+            const absoluteTarget = path.resolve(distRoot, modulePath);
+            const relativeToDist = path.relative(distRoot, absoluteTarget);
+            if (relativeToDist === ".." || relativeToDist.startsWith(`..${path.sep}`) ||
+                path.isAbsolute(relativeToDist)) {
+                throw new Error(`Declaration alias escapes dist: @/${modulePath} in ${file}`);
+            }
+
+            let relative = path.relative(path.dirname(file), absoluteTarget).replaceAll("\\", "/");
+            if (!relative.startsWith(".")) {
+                relative = `./${relative}`;
+            }
+            return `${quote}${relative}${quote}`;
+        }
+    );
+    if (rewritten.includes('"@/') || rewritten.includes("'@/")) {
+        throw new Error(`Unresolved @/ alias in declaration: ${file}`);
+    }
+    return rewritten;
 }
