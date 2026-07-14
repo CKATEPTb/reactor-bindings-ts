@@ -39,7 +39,7 @@
     "./package.json": "./package.json"
   },
   "scripts": {
-    "build": "node scripts/clean-dist.mjs && ngc -p tsconfig.build.json && node scripts/rewrite-dist-aliases.mjs",
+    "build": "vite build",
     "prepack": "npm run build",
     "test": "node scripts/check-tsdoc.mjs && node scripts/check-import-aliases.mjs && tsc -p tsconfig.json && ngc -p tsconfig.angular-test.json && npm run build && vitest run --no-cache && node scripts/check-package.mjs"
   },

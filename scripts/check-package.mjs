@@ -1,6 +1,8 @@
 /** Validates the npm tarball manifest without creating an archive. */
 import {exec} from "node:child_process";
 import {readFile} from "node:fs/promises";
+import path from "node:path";
+import {pathToFileURL} from "node:url";
 import {promisify} from "node:util";
 
 const execAsync = promisify(exec);
@@ -87,6 +89,8 @@ if (!angularDirective.includes("ɵɵngDeclareDirective")) {
     throw new Error("Angular directive is missing partial-compilation metadata");
 }
 
+await validateRuntimeExports();
+
 const forbiddenPrefixes = ["src/", "test/", ".github/", "scripts/"];
 for (const file of packagedFiles) {
     if (forbiddenPrefixes.some(prefix => file.startsWith(prefix))) {
@@ -115,4 +119,50 @@ function isTextPackageFile(file) {
         file.startsWith("dist/") && [".js", ".ts", ".map", ".json"].some(extension =>
             file.endsWith(extension)
         );
+}
+
+/** Ensures Rollup did not tree-shake the public runtime API from package entry points. */
+async function validateRuntimeExports() {
+    const expectedExports = new Map([
+        ["dist/compiler/index.js", ["default", "publisherJsxPlugin"]],
+        ["dist/solid/compiler.js", ["default", "publisherJsxPlugin"]],
+        ["dist/solid/runtime/index.js", ["PublisherChild", "PublisherSequence", "lazyJsxValue"]],
+        ["dist/react/runtime.js", hookRuntimeExports()],
+        ["dist/preact/runtime.js", hookRuntimeExports()],
+        ["dist/vue/runtime.js", [
+            "PublisherChild",
+            "PublisherSequence",
+            "lazyJsxValue",
+            "renderPublisherChild",
+            "renderPublisherSequence"
+        ]],
+        ["dist/angular/index.js", [
+            "PublisherDirective",
+            "PublisherLatestPipe",
+            "PublisherValuesPipe"
+        ]]
+    ]);
+
+    // Angular partial declarations use its compiler as a JIT fallback in this direct Node import.
+    await import("@angular/compiler");
+    for (const [file, names] of expectedExports) {
+        const module = await import(pathToFileURL(path.resolve(file)).href);
+        for (const name of names) {
+            if (!(name in module)) {
+                throw new Error(`Runtime export ${name} is missing from ${file}`);
+            }
+        }
+    }
+}
+
+/** Public exports shared by the React and Preact hook runtimes. */
+function hookRuntimeExports() {
+    return [
+        "PublisherChild",
+        "PublisherSequence",
+        "lazyJsxValue",
+        "renderPublisherChild",
+        "renderPublisherSequence",
+        "usePublisherValues"
+    ];
 }
