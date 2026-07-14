@@ -3,8 +3,15 @@
 /** Ordinary source with a callable map method. */
 interface MappableValue {
     /** Applies a mapper using source-specific semantics. */
-    map(mapper: (value: unknown) => unknown): unknown;
+    map(mapper: MappableMapper): unknown;
 }
+
+/** Native mapper shape used by arrays and compatible source-specific values. */
+type MappableMapper = (
+    value: unknown,
+    index: number,
+    values: readonly unknown[]
+) => unknown;
 
 /**
  * Invokes an ordinary source's native `map` operation.
@@ -15,7 +22,7 @@ interface MappableValue {
  */
 export function mapMappable(
     source: unknown,
-    mapper: (value: unknown) => unknown
+    mapper: MappableMapper
 ): unknown {
     if (!isMappable(source)) {
         throw new TypeError("Publisher JSX map source must be a Publisher or expose a map method");

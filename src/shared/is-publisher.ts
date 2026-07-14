@@ -18,3 +18,17 @@ export function isPublisher<T>(value: unknown): value is Publisher<T> {
         (type === "object" || type === "function") &&
         typeof (value as Publisher<T>).subscribe === "function";
 }
+
+/** Returns whether an ordinary nested array contains a Publisher. */
+export function containsPublisher(
+    values: readonly unknown[],
+    seen = new Set<readonly unknown[]>()
+): boolean {
+    if (seen.has(values)) {
+        return false;
+    }
+    seen.add(values);
+    return values.some(value =>
+        isPublisher(value) || Array.isArray(value) && containsPublisher(value, seen)
+    );
+}

@@ -23,15 +23,26 @@ export class PublisherExternalStore<T> {
     #subscriberCount = 0;
     /** Current upstream subscription. */
     #disposable: Disposable | undefined;
-    /** Whether upstream callbacks still belong to this subscription. */
-    #active = false;
+    /** Identity of the only subscription allowed to mutate this store. */
+    #activeSubscription: object | undefined;
+    /** Selector used by future reconciliation operations. */
+    #keyBy: PublisherKeySelector<T> | undefined;
+    /** Selector already reflected by incremental entries. */
+    #appliedKeyBy: PublisherKeySelector<T> | undefined;
+    /** Signals accumulated until the current synchronous/microtask burst ends. */
+    #pending: Array<T | readonly T[]> = [];
+    /** Subscription whose pending flush already has a queued microtask. */
+    #scheduledFor: object | undefined;
 
     /** Creates a store for one source and immutable render configuration. */
     constructor(
         readonly source: Publisher<T | readonly T[]>,
         readonly mode: PublisherRenderMode,
-        readonly keyBy?: PublisherKeySelector<T>
-    ) {}
+        keyBy?: PublisherKeySelector<T>
+    ) {
+        this.#keyBy = keyBy;
+        this.#appliedKeyBy = keyBy;
+    }
 
     /** Stable client snapshot accessor. */
     readonly getSnapshot = (): PublisherSnapshot<T> => this.#sequence.getSnapshot();
@@ -64,41 +75,50 @@ export class PublisherExternalStore<T> {
         };
     };
 
+    /** Updates a selector without restarting a hot or expensive Publisher. */
+    setKeyBy(keyBy?: PublisherKeySelector<T>): void {
+        this.#keyBy = keyBy;
+    }
+
     /** Starts a fresh guarded upstream subscription. */
     #start(): void {
+        const subscription = {};
+        this.#activeSubscription = subscription;
+        this.#pending = [];
+        this.#scheduledFor = undefined;
+        this.#appliedKeyBy = this.#keyBy;
         this.#sequence.clear();
-        this.#active = true;
         const disposable = subscribeToPublisher(this.source, {
             next: value => {
-                if (!this.#active) {
+                if (this.#activeSubscription !== subscription) {
                     return;
                 }
-                try {
-                    if (this.mode === "snapshot") {
-                        if (!Array.isArray(value)) {
-                            throw new TypeError("Snapshot Publisher must emit an array");
-                        }
-                        this.#sequence.applySnapshot(value, this.keyBy);
-                    } else if (this.mode === "latest") {
-                        this.#sequence.latest(value as T);
-                    } else {
-                        this.#sequence.append(value as T, this.keyBy);
-                    }
-                } catch (error) {
-                    this.#sequence.fail(error);
-                }
+                this.#pending.push(value);
+                this.#scheduleFlush(subscription);
             },
             error: error => {
-                if (this.#active) {
-                    this.#active = false;
+                if (this.#activeSubscription === subscription) {
+                    this.#flushPending(subscription);
+                    if (this.#activeSubscription !== subscription) {
+                        return;
+                    }
+                    this.#activeSubscription = undefined;
+                    this.#disposable = undefined;
                     this.#sequence.fail(error);
                 }
             },
             complete: () => {
-                this.#active = false;
+                if (this.#activeSubscription === subscription) {
+                    this.#flushPending(subscription);
+                    if (this.#activeSubscription !== subscription) {
+                        return;
+                    }
+                    this.#activeSubscription = undefined;
+                    this.#disposable = undefined;
+                }
             }
         });
-        if (!this.#active || this.#subscriberCount === 0) {
+        if (this.#activeSubscription !== subscription || this.#subscriberCount === 0) {
             disposable?.dispose();
             return;
         }
@@ -107,10 +127,66 @@ export class PublisherExternalStore<T> {
 
     /** Cancels upstream and prevents late callbacks from mutating state. */
     #stop(): void {
-        this.#active = false;
+        this.#activeSubscription = undefined;
+        this.#pending = [];
+        this.#scheduledFor = undefined;
         this.#disposable?.dispose();
         this.#disposable = undefined;
         this.#sequence.clear();
+    }
+
+    /** Coalesces one synchronous Publisher burst into one reconciliation publish. */
+    #scheduleFlush(subscription: object): void {
+        if (this.#scheduledFor === subscription) {
+            return;
+        }
+        this.#scheduledFor = subscription;
+        queueMicrotask(() => {
+            if (this.#scheduledFor === subscription) {
+                this.#scheduledFor = undefined;
+                this.#flushPending(subscription);
+            }
+        });
+    }
+
+    /** Applies all pending signals while preserving their append/upsert order. */
+    #flushPending(subscription: object | undefined): void {
+        if (!subscription || this.#activeSubscription !== subscription || this.#pending.length === 0) {
+            return;
+        }
+        const pending = this.#pending;
+        this.#pending = [];
+        if (this.#scheduledFor === subscription) {
+            this.#scheduledFor = undefined;
+        }
+        try {
+            if (this.mode === "snapshot") {
+                const value = pending.at(-1);
+                if (!Array.isArray(value)) {
+                    throw new TypeError("Snapshot Publisher must emit an array");
+                }
+                const keyBy = this.#keyBy;
+                this.#sequence.applySnapshot(value, keyBy, this.#appliedKeyBy !== keyBy);
+                if (this.#activeSubscription !== subscription) {
+                    return;
+                }
+                this.#appliedKeyBy = keyBy;
+            } else if (this.mode === "latest") {
+                this.#sequence.latest(pending.at(-1) as T);
+            } else {
+                const keyBy = this.#keyBy;
+                if (this.#appliedKeyBy !== keyBy) {
+                    this.#sequence.rekeyAppend(keyBy);
+                    if (this.#activeSubscription !== subscription) {
+                        return;
+                    }
+                    this.#appliedKeyBy = keyBy;
+                }
+                this.#sequence.appendMany(pending as readonly T[], keyBy);
+            }
+        } catch (error) {
+            this.#sequence.fail(error);
+        }
     }
 }
 

@@ -68,4 +68,58 @@ describe("PublisherSequenceStore", () => {
 
         expect(listener).toHaveBeenCalledTimes(1);
     });
+
+    it("appends a burst with one notification", () => {
+        const store = new PublisherSequenceStore<number>();
+        const listener = vi.fn();
+        store.subscribe(listener);
+
+        store.appendMany(Array.from({length: 1_000}, (_value, index) => index));
+
+        expect(store.getSnapshot().entries).toHaveLength(1_000);
+        expect(listener).toHaveBeenCalledTimes(1);
+    });
+
+    it("skips an equivalent primitive snapshot", () => {
+        const store = new PublisherSequenceStore<number>();
+        const listener = vi.fn();
+        store.applySnapshot([1, 2]);
+        store.subscribe(listener);
+
+        store.applySnapshot([1, 2]);
+
+        expect(listener).not.toHaveBeenCalled();
+    });
+
+    it("clears a failure when the next valid snapshot has equivalent values", () => {
+        const store = new PublisherSequenceStore<number>();
+        store.applySnapshot([1, 2]);
+        store.fail(new TypeError("invalid snapshot"));
+
+        store.applySnapshot([1, 2]);
+
+        expect(store.getSnapshot().failure).toBeUndefined();
+        expect(store.getSnapshot().entries.map(entry => entry.value)).toEqual([1, 2]);
+    });
+
+    it("rolls back keyed burst bookkeeping when a selector throws", () => {
+        const store = new PublisherSequenceStore<User>();
+        const keyBy = (user: User): number => {
+            if (user.id < 0) {
+                throw new TypeError("invalid key");
+            }
+            return user.id;
+        };
+        store.append({id: 1, name: "one"}, keyBy);
+
+        expect(() => store.appendMany([
+            {id: 2, name: "aborted"},
+            {id: -1, name: "invalid"}
+        ], keyBy)).toThrow("invalid key");
+        store.append({id: 3, name: "three"}, keyBy);
+        store.append({id: 2, name: "two"}, keyBy);
+
+        expect(store.getSnapshot().entries.map(entry => entry.value.name))
+            .toEqual(["one", "three", "two"]);
+    });
 });
