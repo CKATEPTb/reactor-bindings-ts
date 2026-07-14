@@ -11,7 +11,13 @@ import {
     type OnDestroy
 } from "@angular/core";
 import type {Publisher} from "reactor-core-ts";
-import type {PublisherKey, PublisherKeySelector, PublisherRenderMode} from "@/shared/types.js";
+import type {PublisherValue} from "@/shared/publisher-value.js";
+import type {
+    PublisherEntry,
+    PublisherKey,
+    PublisherKeySelector,
+    PublisherRenderMode
+} from "@/shared/types.js";
 import {PublisherBinding} from "@/angular/publisher-binding.js";
 import {PublisherFailureHandler} from "@/angular/publisher-failure-handler.js";
 
@@ -29,6 +35,41 @@ export interface PublisherContext<T> {
     key: PublisherKey;
 }
 
+/** Extracts the rendered value for the directive's selected reconciliation mode. */
+export type PublisherDirectiveItem<
+    Source extends Publisher<unknown> | "",
+    Mode extends PublisherRenderMode = "append"
+> = Mode extends "snapshot"
+    ? PublisherValue<Extract<Source, Publisher<unknown>>> extends readonly (infer Item)[]
+        ? Item
+        : never
+    : PublisherValue<Extract<Source, Publisher<unknown>>>;
+
+/** Selects the bound `from` Publisher, falling back to the concise primary input. */
+type PublisherDirectiveSource<
+    Primary extends Publisher<unknown> | "",
+    From extends Publisher<unknown> | undefined
+> = [Extract<From, Publisher<unknown>>] extends [never]
+    ? Extract<Primary, Publisher<unknown>>
+    : [Primary] extends [""]
+        ? Extract<From, Publisher<unknown>>
+        : Extract<Primary, Publisher<unknown>>;
+
+/** Rendered item inferred from both structural input forms and their mode. */
+type PublisherDirectiveBoundItem<
+    Primary extends Publisher<unknown> | "",
+    From extends Publisher<unknown> | undefined,
+    Mode extends PublisherRenderMode
+> = PublisherDirectiveItem<PublisherDirectiveSource<Primary, From>, Mode>;
+
+/** Retained Angular view and the entry snapshot it last rendered. */
+interface PublisherViewState<T> {
+    /** Embedded view owned by the directive. */
+    readonly view: EmbeddedViewRef<PublisherContext<T>>;
+    /** Immutable entry identity used to detect every upstream update. */
+    entry: PublisherEntry<T>;
+}
+
 /**
  * Renders one embedded view for every reconciled Publisher entry.
  *
@@ -40,37 +81,61 @@ export interface PublisherContext<T> {
  * ```
  */
 @Directive({selector: "[publisher]", standalone: true})
-export class PublisherDirective<T> implements OnChanges, OnDestroy {
+export class PublisherDirective<
+    Primary extends Publisher<unknown> | "" = Publisher<unknown>,
+    From extends Publisher<unknown> | undefined = undefined,
+    Mode extends PublisherRenderMode = "append"
+> implements OnChanges, OnDestroy {
     /** Publisher supplied through the concise `[publisher]` form. */
-    @Input() publisher: Publisher<T | readonly T[]> | undefined;
+    @Input() publisher!: Primary;
     /** Publisher supplied by structural-directive `from` microsyntax. */
-    @Input() publisherFrom: Publisher<T | readonly T[]> | undefined;
+    @Input() publisherFrom!: From;
     /** Append, latest, or authoritative snapshot behavior. */
-    @Input() publisherMode: PublisherRenderMode = "append";
+    @Input() publisherMode: Mode = "append" as Mode;
     /** Optional stable application key selector. */
-    @Input() publisherKeyBy: PublisherKeySelector<T> | undefined;
+    @Input() publisherKeyBy: PublisherKeySelector<
+        PublisherDirectiveBoundItem<Primary, From, Mode>
+    > | undefined;
 
     /** Host view container. */
     readonly #container = inject(ViewContainerRef);
     /** Embedded template instantiated per value. */
-    readonly #template = inject<TemplateRef<PublisherContext<T>>>(TemplateRef);
+    readonly #template = inject<TemplateRef<PublisherContext<
+        PublisherDirectiveBoundItem<Primary, From, Mode>
+    >>>(TemplateRef);
     /** Angular error boundary. */
     readonly #errorHandler = inject(ErrorHandler);
     /** Deduplicated Publisher failure reporter. */
     readonly #failureHandler = new PublisherFailureHandler(this.#errorHandler);
     /** Views indexed by framework-safe shared-store identity. */
-    readonly #views = new Map<number, EmbeddedViewRef<PublisherContext<T>>>();
+    readonly #views = new Map<number, PublisherViewState<
+        PublisherDirectiveBoundItem<Primary, From, Mode>
+    >>();
+    /** Entry identities in the same order as the view container. */
+    #order: readonly number[] = [];
     /** Publisher lifecycle binding. */
-    readonly #binding = new PublisherBinding<T>(() => this.#render());
+    readonly #binding = new PublisherBinding<
+        PublisherDirectiveBoundItem<Primary, From, Mode>
+    >(
+        () => this.#render()
+    );
     /** Reconnects when a structural directive input changes. */
     ngOnChanges(): void {
-        const source = this.publisherFrom ?? this.publisher;
+        const concise = this.publisher as Primary | undefined;
+        const source = this.publisherFrom ?? (concise === "" ? undefined : concise);
         if (!source) {
             this.#binding.disconnect();
             this.#clearViews();
             return;
         }
-        this.#binding.connect(source, this.publisherMode, this.publisherKeyBy);
+        this.#binding.connect(
+            source as Publisher<
+                PublisherDirectiveBoundItem<Primary, From, Mode> |
+                readonly PublisherDirectiveBoundItem<Primary, From, Mode>[]
+            >,
+            this.publisherMode,
+            this.publisherKeyBy
+        );
         this.#render();
     }
 
@@ -81,10 +146,14 @@ export class PublisherDirective<T> implements OnChanges, OnDestroy {
     }
 
     /** Tells Angular's template checker which variables the directive exposes. */
-    static ngTemplateContextGuard<T>(
-        _directive: PublisherDirective<T>,
+    static ngTemplateContextGuard<
+        Primary extends Publisher<unknown> | "",
+        From extends Publisher<unknown> | undefined,
+        Mode extends PublisherRenderMode
+    >(
+        _directive: PublisherDirective<Primary, From, Mode>,
         _context: unknown
-    ): _context is PublisherContext<T> {
+    ): _context is PublisherContext<PublisherDirectiveBoundItem<Primary, From, Mode>> {
         return true;
     }
 
@@ -92,44 +161,65 @@ export class PublisherDirective<T> implements OnChanges, OnDestroy {
     #render(): void {
         const snapshot = this.#binding.snapshot;
         this.#failureHandler.report(snapshot);
-        const retained = new Set(snapshot.entries.map(entry => entry.id));
-        for (const [id, view] of this.#views) {
+        const entries = snapshot.entries;
+        const count = entries.length;
+        const nextOrder = new Array<number>(count);
+        const retained = new Set<number>();
+        const changedViews: EmbeddedViewRef<
+            PublisherContext<PublisherDirectiveBoundItem<Primary, From, Mode>>
+        >[] = [];
+        for (let index = 0; index < count; index += 1) {
+            const id = entries[index]!.id;
+            nextOrder[index] = id;
+            retained.add(id);
+        }
+        for (let index = this.#order.length - 1; index >= 0; index -= 1) {
+            const id = this.#order[index]!;
             if (!retained.has(id)) {
-                const index = this.#container.indexOf(view);
-                if (index >= 0) {
-                    this.#container.remove(index);
-                }
+                this.#container.remove(index);
                 this.#views.delete(id);
             }
         }
-        const count = snapshot.entries.length;
-        snapshot.entries.forEach((entry, index) => {
-            let view = this.#views.get(entry.id);
-            if (!view) {
+        for (let index = 0; index < count; index += 1) {
+            const entry = entries[index]!;
+            const state = this.#views.get(entry.id);
+            let view: EmbeddedViewRef<PublisherContext<
+                PublisherDirectiveBoundItem<Primary, From, Mode>
+            >>;
+            let changed = true;
+            if (!state) {
                 view = this.#container.createEmbeddedView(
                     this.#template,
                     createContext(entry.value, index, count, entry.key),
                     {index}
                 );
-                this.#views.set(entry.id, view);
+                this.#views.set(entry.id, {view, entry});
+                changed = true;
             } else {
-                const changed = contextChanged(view.context, entry.value, index, count, entry.key);
+                view = state.view;
+                changed = state.entry !== entry ||
+                    contextChanged(view.context, entry.value, index, count, entry.key);
                 updateContext(view.context, entry.value, index, count, entry.key);
-                if (this.#container.indexOf(view) !== index) {
+                state.entry = entry;
+                if (this.#container.get(index) !== view) {
                     this.#container.move(view, index);
                 }
-                if (!changed) {
-                    return;
-                }
             }
+            if (changed) {
+                changedViews.push(view);
+            }
+        }
+        this.#order = nextOrder;
+        for (const view of changedViews) {
             view.detectChanges();
-        });
+        }
     }
 
     /** Destroys every retained embedded view. */
     #clearViews(): void {
         this.#container.clear();
         this.#views.clear();
+        this.#order = [];
     }
 }
 

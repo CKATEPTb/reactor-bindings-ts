@@ -31,24 +31,36 @@ export class PublisherBinding<T> {
         return this.#snapshot;
     }
 
-    /** Connects to a Publisher unless the complete configuration is already active. */
+    /** Connects to a Publisher and updates selectors without restarting the source. */
     connect(
         source: Publisher<T | readonly T[]>,
         mode: PublisherRenderMode,
         keyBy?: PublisherKeySelector<T>
     ): void {
         const current = this.#configuration;
-        if (current?.source === source && current.mode === mode && current.keyBy === keyBy) {
+        if (current?.source === source && current.mode === mode) {
+            if (current.keyBy !== keyBy) {
+                this.#configuration = {source, mode, keyBy};
+                this.#store?.setKeyBy(keyBy);
+            }
             return;
         }
         this.disconnect();
         this.#configuration = {source, mode, keyBy};
         const store = new PublisherExternalStore(source, mode, keyBy);
         this.#store = store;
-        this.#unsubscribe = store.subscribe(() => {
+        const unsubscribe = store.subscribe(() => {
+            if (this.#store !== store) {
+                return;
+            }
             this.#snapshot = store.getSnapshot();
             this.onChange();
         });
+        if (this.#store !== store) {
+            unsubscribe();
+            return;
+        }
+        this.#unsubscribe = unsubscribe;
         this.#snapshot = store.getSnapshot();
     }
 

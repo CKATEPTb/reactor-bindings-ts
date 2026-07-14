@@ -10,6 +10,7 @@ import {
 import type {Publisher} from "reactor-core-ts";
 import {PublisherBinding} from "@/angular/publisher-binding.js";
 import {PublisherFailureHandler} from "@/angular/publisher-failure-handler.js";
+import type {PublisherValue} from "@/shared/publisher-value.js";
 
 /** Subscribes to a Publisher and returns its latest emitted value. */
 @Pipe({name: "publisherLatest", standalone: true, pure: false})
@@ -23,11 +24,11 @@ export class PublisherLatestPipe implements PipeTransform, OnDestroy {
     /** Publisher lifecycle binding. */
     readonly #binding = new PublisherBinding<unknown>(() => this.#changeDetector.markForCheck());
     /** Returns the latest emitted value, or `undefined` before the first signal. */
-    transform<T>(source: Publisher<T>): T | undefined {
+    transform<Source extends Publisher<unknown>>(source: Source): PublisherValue<Source> | undefined {
         this.#binding.connect(source as Publisher<unknown>, "latest");
         const snapshot = this.#binding.snapshot;
         this.#failureHandler.report(snapshot);
-        return snapshot.entries[0]?.value as T | undefined;
+        return snapshot.entries[0]?.value as PublisherValue<Source> | undefined;
     }
 
     /** Cancels the active subscription. */
