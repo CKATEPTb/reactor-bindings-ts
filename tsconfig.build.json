@@ -2,7 +2,7 @@
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
     "rootDir": "./src",
-    "outDir": "./dist",
+    "outDir": "./node_modules/.cache/reactor-bindings-ts/build",
     "declaration": true
   },
   "angularCompilerOptions": {

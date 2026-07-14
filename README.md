@@ -823,17 +823,8 @@ suite:
 
 ```sh
 npm ci
+npm run build
 npm test
-```
-
-## Publishing
-
-`npm pack` and `npm publish` automatically run a clean production build through
-the package's `prepack` script. To inspect the package contents locally without
-publishing them, run:
-
-```sh
-npm pack --dry-run
 ```
 
 ## License
