@@ -827,21 +827,6 @@ npm run build
 npm test
 ```
 
-## Publishing
-
-Pushing to the `production` branch runs the publication workflow. It installs
-the locked dependencies, creates a clean production build, tests the project,
-validates the package contents, and publishes the package to npm with
-provenance.
-
-To reproduce the package checks locally without publishing, run:
-
-```sh
-npm run build
-npm test
-node scripts/check-package.mjs
-```
-
 ## License
 
 This project is licensed under the
