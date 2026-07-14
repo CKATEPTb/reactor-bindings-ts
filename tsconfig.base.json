@@ -1,0 +1,32 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "baseUrl": ".",
+    "paths": {
+      "@/test/*": ["./test/*"],
+      "@/*": ["./src/*"],
+      "reactor-bindings-ts": ["./src/index.ts"],
+      "reactor-bindings-ts/react/jsx-runtime": ["./src/react/jsx-runtime.ts"],
+      "reactor-bindings-ts/react/jsx-dev-runtime": ["./src/react/jsx-dev-runtime.ts"],
+      "reactor-bindings-ts/preact/jsx-runtime": ["./src/preact/jsx-runtime.ts"],
+      "reactor-bindings-ts/preact/jsx-dev-runtime": ["./src/preact/jsx-dev-runtime.ts"],
+      "reactor-bindings-ts/vue/jsx-runtime": ["./src/vue/jsx-runtime.ts"],
+      "reactor-bindings-ts/vue/jsx-dev-runtime": ["./src/vue/jsx-dev-runtime.ts"],
+      "reactor-bindings-ts/solid/jsx-runtime": ["./src/solid/jsx-runtime.ts"],
+      "reactor-bindings-ts/solid/jsx-dev-runtime": ["./src/solid/jsx-dev-runtime.ts"],
+      "reactor-bindings-ts/solid/runtime": ["./src/solid/runtime/index.ts"],
+      "reactor-bindings-ts/*": ["./src/*"]
+    },
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "strict": true,
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true,
+    "useDefineForClassFields": true,
+    "experimentalDecorators": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  }
+}
